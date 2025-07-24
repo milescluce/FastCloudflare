@@ -9,8 +9,8 @@ from async_property import async_cached_property
 from loguru import logger as log
 from toomanythreads import ManagedThread
 
-from pycloudflare.src.pycloudflare import cloudflared
-from pycloudflare.src.pycloudflare.api_manager import Response
+from . import cloudflared
+from .api_manager import Response
 from .api_manager import APIGateway
 
 DEFAULT_CONFIG = {
