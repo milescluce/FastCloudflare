@@ -1,140 +1,103 @@
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
 import toml
 from async_property import async_cached_property
 from loguru import logger as log
-from toomanythreads import ManagedThread
+from pyzurecli import PyzureServer
+# from pyzurecli import PyzureServer
+from toomanysessions import SessionedServer
+from toomanythreads import ManagedThread, ThreadedServer
 
 from . import cloudflared
-from .api_manager import Response
-from .api_manager import APIGateway
-
-DEFAULT_CONFIG = {
-    "info": {
-        "hostname": "",
-        "service_url": ""
-    },
-    "tunnel": {
-        "name": "",
-        "id": "",
-        "token": "",
-        "meta": ""
-    }
-}
-
+from toomanyconfigs import TOMLDataclass, API, VarsConfig, HeadersConfig, RoutesConfig, APIConfig
 
 @dataclass
-class Info:
-    domain: str
-    service_url: str
-
-    @classmethod
-    def default(cls):
-        return cls(domain="", service_url="")
-
+class CloudflareAPIHeaders(HeadersConfig):
+    authorization: str = "Bearer $CLOUDFLARE_API_TOKEN"
 
 @dataclass
-class Tunnel:
-    name: str
-    id: str
-    token: str
-    meta: dict
-
-    @classmethod
-    def default(cls):
-        return cls(name="", id="", token="", meta={})
-
+class CloudflareAPIRoutes(RoutesConfig):
+    base: str = "https://api.cloudflare.com/client/v4"
 
 @dataclass
-class CFG:
-    path: Path
-    info: Info
-    tunnel: Tunnel
+class CloudflareAPIVars(TOMLDataclass):
+    cloudflare_api_token: str = None
+    cloudflare_email: str = None
+    account_id: str = None
+    zone_id: str = None
+
+class CloudflareAPI(API):
+    def __init__(self):
+        self.cfg_file = Path.cwd() / "cloudflare_api.toml"
+        self.vars_file = Path.cwd() / "cloudflare_vars.toml"
+        self.routes = {
+            "tunnel": "/accounts/$ACCOUNT_ID/cfd_tunnel",
+            "dns_record": "/zones/$ZONE_ID/dns_records"
+        }
+        config = APIConfig.create(
+            source=self.cfg_file,
+            headers=CloudflareAPIHeaders(),
+            routes=CloudflareAPIRoutes(routes=self.routes),
+            vars=CloudflareAPIVars.create(self.vars_file),
+        )
+        super().__init__(config)
 
     def __repr__(self):
-        return "[Cloudflare.CFG]"
+        return "[Cloudflare.API]"
 
-    @classmethod
-    def from_toml(cls, path: Path):
-        info = Info.default()
-        tunnel = Tunnel.default()
-        items = [path, info, tunnel]
-        inst = cls(*items)
-        if not inst.path.exists():
-            log.warning(f"{inst}: toml for CloudflareAPI config not yet found... Creating...")
-            inst.path.touch()
-            time.sleep(1.5)
-            inst.info.domain = input(f"Please input your Cloudflare domain below:\n")
-            inst.write()
-        else:
-            inst.read()
-        return inst
+@dataclass
+class Info(TOMLDataclass):
+    domain: str = None
+    service_url: str = ""
 
-    def write(self):
-        log.debug(f"{self}: Attempting to write to {self.path}")
-        f = self.path.open("w")
-        info = dict(info=self.info.__dict__)
-        tunnel = dict(tunnel=self.tunnel.__dict__)
-        toml.dump(info, f)
-        f.write("\n")
-        toml.dump(tunnel, f)
+@dataclass
+class Tunnel(TOMLDataclass):
+    name: str = ""
+    id: str = ""
+    token: str = ""
+    meta: dict = field(default_factory=dict)
 
-    def read(self):
-        log.debug(f"{self}: Attempting to read {self.path}")
-        f = self.path.open("r")
-        data = toml.load(f)
-        log.debug(f"{self}: Loaded config from .toml:\ndata={data}")
-        try:
-            self.info = Info(**data["info"])
-            self.tunnel = Tunnel(**data["tunnel"])
-            log.debug(self.tunnel)
-        except KeyError as e:
-            log.error(f"{self}: {e}")
-            return self
+info_path = Path.cwd() / "cloudflared_info.toml"
+tunnel_path = Path.cwd() / "cloudflared_tunnel.toml"
 
+@dataclass
+class CloudflaredCFG(TOMLDataclass):
+    info: Info = field(default_factory=Info.create(info_path))
+    tunnel: Tunnel = field(default_factory=Tunnel.create(tunnel_path))
 
-CFG = CFG.from_toml
+    def __repr__(self):
+        return "[Cloudflare.CLI]"
 
-
-class Cloudflare(APIGateway):
-    def __init__(self, toml: Path = None):
-        self.cwd = Path.cwd()
-        self.path = Path(self.cwd / "cloudflare_api.toml")
-        self.cfg_path = Path(self.cwd / "cloudflare_api_cfg.toml")
-        if toml:
-            self.cwd = toml.parent
-            self.path = toml
-        _ = self.cloudflare_cfg
-        APIGateway.__init__(self, path=self.path)
+class Cloudflare(CloudflareAPI):
+    def __init__(self, app: ThreadedServer | SessionedServer | PyzureServer = None, url = None):
+        self.app = app
+        self.url = url or ""
+        super().__init__()
+        self.cloudflared_cfg = CloudflaredCFG.create(Path.cwd())
 
     def __repr__(self):
         return f"[Cloudflare.Gateway]"
 
     @cached_property
-    def cloudflare_cfg(self) -> CFG:
-        cfg = CFG(self.cfg_path)
-        return cfg
-
-    @cached_property
-    def name(self) -> str:
-        domain = self.cloudflare_cfg.info.domain
+    def domain_name(self) -> str:
+        domain = self.cloudflared_cfg.info.domain
         n = domain.split(".")
         return n[0]
 
     # noinspection PyTypeChecker
     @async_cached_property
     async def tunnel(self) -> Tunnel:
-        name = f"{self.name}-tunnel"
+        name = f"{self.domain_name}-tunnel"
         name = name.replace(".", "-")
-        if self.cloudflare_cfg.tunnel.id == "":
+        if self.cloudflared_cfg.tunnel.id == "":
             post = await self.api_post(
                 route="tunnel",
                 json={
-                    "name": f"{name}",
+                    "domain_name": f"{name}",
                     "config_src": "cloudflare"
                 },
                 force_refresh=True
@@ -142,50 +105,50 @@ class Cloudflare(APIGateway):
             if post.status == 200:
                 meta = post.body["result"]
                 tunnel = Tunnel(name=name, id=meta["id"], token=meta["token"], meta=meta)
-                self.cloudflare_cfg.tunnel = tunnel
-                self.cloudflare_cfg.write()
-                log.success(f"{self}: Successfully found tunnel! {self.cloudflare_cfg.tunnel}")
+                self.cloudflared_cfg.tunnel = tunnel
+                self.cloudflared_cfg.write()
+                log.success(f"{self}: Successfully found tunnel! {self.cloudflared_cfg.tunnel}")
                 return tunnel
             if post.status == 409:
                 meta = None
                 log.warning(f"{self}: Tunnel for {name} already exists!")
-                get: Response = await self.api_get(
+                get = await self.api_get(
                     route="tunnel",
                     force_refresh=True
                 )
                 get: list = get.body["result"]
                 for item in get:
-                    log.debug(f"{self}: Scanning for {name} in {item}...\n  - item_name={item["name"]}")
-                    if item["name"] == name:
+                    log.debug(f"{self}: Scanning for {name} in {item}...\n  - item_name={item["domain_name"]}")
+                    if item["domain_name"] == name:
                         meta = item
                         log.success(f"{self}: Successfully found {name}!\n  - metadata={item}")
                         break
-                cfd = await cloudflared(f"'cloudflared tunnel token {meta["id"]}'", headless=True)
+                cfd = cloudflared(f"'cloudflared tunnel token {meta["id"]}'", headless=True)
                 tunnel = Tunnel(name=name, id=meta["id"], token=cfd.output, meta=meta)
-                self.cloudflare_cfg.tunnel = tunnel
-                self.cloudflare_cfg.write()
-                log.success(f"{self}: Successfully found tunnel! {self.cloudflare_cfg.tunnel}")
+                self.cloudflared_cfg.tunnel = tunnel
+                self.cloudflared_cfg.write()
+                log.success(f"{self}: Successfully found tunnel! {self.cloudflared_cfg.tunnel}")
                 return tunnel
         else:
-            log.debug(f"{self}: Found tunnel creds in {self.cloudflare_cfg.path}!")
-            return self.cloudflare_cfg.tunnel
+            log.debug(f"{self}: Found tunnel creds in {self.cloudflared_cfg.path}!")
+            return self.cloudflared_cfg.tunnel
 
     @async_cached_property
     async def connect_server(self):
         try:
-            if self.cloudflare_cfg.info.service_url == "": raise RuntimeError(
+            if self.cloudflared_cfg.info.service_url == "": raise RuntimeError(
                 f"Can't launch cloudflared without a service to launch it to!")
         except RuntimeError:
             try:
-                self.cloudflare_cfg.info.service_url = self.url
+                self.cloudflared_cfg.info.service_url = getattr(self.app, "url", self.url)
             except AttributeError:
                 raise RuntimeError
         ingress_cfg = {
             "config": {
                 "ingress": [
                     {
-                        "hostname": f"{self.cloudflare_cfg.info.domain}",
-                        "service": f"{self.cloudflare_cfg.info.service_url}",
+                        "hostname": f"{self.cloudflared_cfg.info.domain}",
+                        "service": f"{self.cloudflared_cfg.info.service_url}",
                         "originRequest": {}
                     },
                     {
@@ -211,30 +174,30 @@ class Cloudflare(APIGateway):
     async def dns_record(self):
         # record_name = "phazebreak.work"
         # records = asyncio.run(self.receptionist.get("dns_record", append="?zone_id=$ZONE_ID"))
-        # record_id = next(r["id"] for r in records.content["result"] if r["name"] == record_name)
+        # record_id = next(r["id"] for r in records.content["result"] if r["domain_name"] == record_name)
         # asyncio.run(self.receptionist.delete(f"dns_record", append=f"{record_id}"))
 
         name = self.cloudflare_cfg.info.domain
         cfg = {
             "type": "CNAME",
             "proxied": True,
-            "name": f"{name}",
+            "domain_name": f"{name}",
             "content": f"{self.cloudflare_cfg.tunnel.id}.cfargotunnel.com"
         }
         out = await self.api_post(route="dns_record", json=cfg, force_refresh=True)
         if out.status == 400 and out.body["errors"][0]["code"] == 81053:
             log.warning(f"{self}DNS Request already exists!\nreq={out}")
             headers = {
-                f"X-Auth-Email": f"{self.api_vars["cloudflare_email"]}",
-                f"X-Auth-Key": f"{self.api_vars["cloudflare_api_token"]}"
+                f"X-Auth-Email": f"{self.vars["cloudflare_email"]}",
+                f"X-Auth-Key": f"{self.vars["cloudflare_api_token"]}"
             }
 
             recs = await self.api_get(route="dns_record", force_refresh=True)
             get: list = recs.body["result"]
             rec = None
             for item in get:
-                log.debug(f"{self}: Scanning for {name} in {item}...\n  - item_name={item["name"]}")
-                if item["name"] == name:
+                log.debug(f"{self}: Scanning for {name} in {item}...\n  - item_name={item["domain_name"]}")
+                if item["domain_name"] == name:
                     rec = item
                     log.success(f"{self}: Successfully found {name} in DNS Records!\n  - metadata={item}")
                     break
@@ -249,13 +212,13 @@ class Cloudflare(APIGateway):
         return out
 
     @async_cached_property
-    async def cloudflare_thread(self) -> threading.Thread:
+    async def cloudflared_thread(self) -> threading.Thread:
         await self.tunnel, await self.connect_server, await self.dns_record
 
         @ManagedThread
         def _launcher():
             log.debug(f"Attempting to run tunnel...")
-            cloudflared(f"'cloudflared tunnel info {self.cloudflare_cfg.tunnel.id}'", headless=True)
-            cloudflared(f"'cloudflared tunnel run --token {self.cloudflare_cfg.tunnel.token}'", headless=False)
+            cloudflared(f"'cloudflared tunnel info {self.cloudflared_cfg.tunnel.id}'", headless=True)
+            cloudflared(f"'cloudflared tunnel run --token {self.cloudflared_cfg.tunnel.token}'", headless=False)
 
         return _launcher

@@ -1,9 +1,9 @@
 [project]
-name = "fastcloudflare"
+domain_name = "fastcloudflare"
 version = "0.1.1"
 description = ""
 authors = [
-    {name = "genderlesspit",email = "59433707+genderlesspit@users.noreply.github.com"}
+    {domain_name = "genderlesspit",email = "59433707+genderlesspit@users.noreply.github.com"}
 ]
 readme = "README.md"
 requires-python =  ">=3.13,<4.0"
