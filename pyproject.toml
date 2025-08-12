@@ -1,20 +1,18 @@
 [project]
-domain_name = "fastcloudflare"
-version = "0.1.1"
+name = "fastcloudflare"
+version = "0.1.2"
 description = ""
 authors = [
-    {domain_name = "genderlesspit",email = "59433707+genderlesspit@users.noreply.github.com"}
+    {name = "Miles Copeland Luce"}
 ]
 readme = "README.md"
 requires-python =  ">=3.13,<4.0"
 dependencies = [
-    "async-property (>=0.2.2,<0.3.0)",
     "loguru (>=0.7.3,<0.8.0)",
-    "toomanythreads (>=0.2.3,<0.3.0)",
-    "gowershell (>=0.2,<0.3)",
-    "pywershell (>=0.3,<0.4)",
+    "toomanysessions (>=0.3,<0.4)",
     "aiohttp (>=3.12.14,<4.0.0)",
-    "toml (>=0.10.2,<0.11.0)"
+    "toml (>=0.10.2,<0.11.0)",
+    "toomanythreads (>=0.2.62,<0.3.0)",
 ]
 
 [tool.poetry]

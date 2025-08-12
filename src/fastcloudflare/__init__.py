@@ -6,6 +6,8 @@ from gowershell import Response
 from loguru import logger as log
 from pywershell import Pywersl
 
+from .api_cfg import CloudflareAPI, Info, Tunnel
+
 REPR = "[CloudflaredCLI]"
 BASE_CMD = "cloudflared"
 VERSION = None
@@ -53,26 +55,5 @@ def login():
 login()
 
 from .cloudflare_api import Cloudflare
-
-
-
-# VERSION =
-#     # self.login()
-#     # except Exception: raise RuntimeError(f"{self}: Cloudflared container failed to start")
-#     # log.success(f"{self}: Session initialized!")
-#     return result
-#
-#
-#
-# def login(self):
-#     output = Pywersl().run(["cloudflared", "tunnel", "list"], ignore_codes=[1])
-#     if "ERR Cannot determine default origin" in output:
-#         self.run(["tunnel", "login"], headless=False)
-#         log.error("Please create a valid user login session with Cloudflared CLI... Ending this session...")
-#         sys.exit()
-#
-#
-#
-#
-# from cloudflared_cli import CloudflaredCLI
-#
+from .api_cfg import CloudflareAPIConfig
+from .gateway import Gateway
