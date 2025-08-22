@@ -1,6 +1,6 @@
 [project]
 name = "fastcloudflare"
-version = "0.1.2"
+version = "0.1.21"
 description = ""
 authors = [
     {name = "Miles Copeland Luce"}
@@ -8,11 +8,14 @@ authors = [
 readme = "README.md"
 requires-python =  ">=3.13,<4.0"
 dependencies = [
+    "toomanysessions (>=0.1.9960,<0.2.0)",
+    "toomanyconfigs (>=0.2.83,<0.3.0)",
+    "fastapi (>=0.116.1,<0.117.0)",
+    "starlette (>=0.47.2,<0.48.0)",
+    "toomanyports (>=0.1.1,<0.2.0)",
+    "toomanythreads (>=0.2.73,<0.3.0)",
     "loguru (>=0.7.3,<0.8.0)",
-    "toomanysessions (>=0.3,<0.4)",
-    "aiohttp (>=3.12.14,<4.0.0)",
-    "toml (>=0.10.2,<0.11.0)",
-    "toomanythreads (>=0.2.62,<0.3.0)",
+    "fastmicroservices (>=0.1.43,<0.2.0)"
 ]
 
 [tool.poetry]

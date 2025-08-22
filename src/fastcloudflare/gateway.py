@@ -10,6 +10,7 @@ from starlette.responses import HTMLResponse, Response
 from toomanyports import PortManager
 from toomanysessions import SessionedServer, Session, User
 from toomanythreads import ThreadedServer
+from fastmicroservices import Macroservice, Microservice
 
 from . import Cloudflare
 from . import CloudflareAPIConfig
@@ -17,10 +18,9 @@ from . import CloudflareAPIConfig
 DEBUG = True
 
 
-class Gateway(Cloudflare, SessionedServer):
+class Gateway(Macroservice, SessionedServer, Cloudflare):
     def __init__(
             self,
-            app: FastAPI | SessionedServer | ThreadedServer,
             host: str = "localhost",
             port: int = PortManager().random_port(),
             session_name: str = "session",
@@ -41,7 +41,6 @@ class Gateway(Cloudflare, SessionedServer):
             self,
             config=cfg
         )
-        self.app = app
         self.config.info.service_url = f"http://{host}:{port}"
         log.debug(f"{self}: Set service_url: {self.config.info.service_url}")
         self.config.write()
@@ -58,61 +57,9 @@ class Gateway(Cloudflare, SessionedServer):
             verbose=verbose,
             **sessioned_server_kwargs
         )
-
-        @self.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
-        async def forward(path: str, request: Request):
-            url = f"{self.app.url}/{path}"
-            log.debug(f"{self}: Attempting request to {url}")
-
-            try:
-                # Use persistent client with keep-alive
-                resp = await self.client.request(
-                    request.method,
-                    url,
-                    headers={k: v for k, v in request.headers.items() if k.lower() not in {'host', 'content-length'}},
-                    content=await request.body(),
-                    params=request.query_params,
-                    follow_redirects=True
-                )
-                # Clean headers that cause issues
-                headers = {}
-                for k, v in resp.headers.items():
-                    if k.lower() not in {'content-encoding', 'transfer-encoding', 'content-length', 'connection'}:
-                        headers[k] = v
-
-                # Force connection keep-alive in response
-                headers['Connection'] = 'keep-alive'
-                headers['Keep-Alive'] = 'timeout=60, max=1000'
-
-                response = Response(
-                    content=resp.content,
-                    status_code=resp.status_code,
-                    headers=headers
-                )
-                # if resp.content == {"detail": "Not Found"}: response.status_code = 404
-
-                # Handle 404s with animated popup
-                if response.status_code == 404:
-                    return HTMLResponse(
-                        self.popup_404(
-                            message=f"The page '{request.url.path}' could not be found."
-                        ),
-                        status_code=404
-                    )
-
-                return response
-
-            except Exception as e:
-                log.error(f"{self}: Error processing request: {e}")
-                return HTMLResponse(
-                    self.popup_error(
-                        error_code=500,
-                        message="An unexpected error occurred while processing your request."
-                    ),
-                    status_code=500
-                )
-
-        self.app.thread.start()
+        Macroservice.__init__(
+            self
+        )
 
     @cached_property
     def url(self):
